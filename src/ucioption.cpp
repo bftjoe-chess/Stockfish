@@ -73,7 +73,10 @@ void init(OptionsMap& o) {
   o["Slow Mover"]            << Option(100, 10, 1000);
   o["nodestime"]             << Option(0, 0, 10000);
   o["UCI_Chess960"]          << Option(false);
-  o["UCI_Variant"]           << Option(variants.front().c_str(), variants);
+  if (variants.size() == 2)
+  	o["UCI_Variant"]           << Option(variants.back().c_str(), variants);
+  else
+        o["UCI_Variant"]           << Option(variants.front().c_str(), variants);
   o["UCI_AnalyseMode"]       << Option(false);
   o["UCI_LimitStrength"]     << Option(false);
   o["UCI_Elo"]               << Option(1350, 0, 3000);
