@@ -1,6 +1,6 @@
 /*
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
-  Copyright (C) 2004-2020 The Stockfish developers (see AUTHORS file)
+  Copyright (C) 2004-2021 The Stockfish developers (see AUTHORS file)
 
   Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -31,7 +31,7 @@ namespace {
 
   // Pawn penalties
   constexpr Score Backward[VARIANT_NB] = {
-    S( 8, 25),
+    S( 9, 22),
 #ifdef ANTI
     S(26, 50),
 #endif
@@ -67,7 +67,7 @@ namespace {
 #endif
   };
   constexpr Score Doubled[VARIANT_NB] = {
-    S(10, 55),
+    S(13, 51),
 #ifdef ANTI
     S( 4, 51),
 #endif
@@ -102,6 +102,7 @@ namespace {
     S(13, 40),
 #endif
   };
+  constexpr Score DoubledEarly  = S(20,  7);
   constexpr Score Isolated[VARIANT_NB] = {
     S( 3, 15),
 #ifdef ANTI
@@ -138,18 +139,18 @@ namespace {
     S(13, 16),
 #endif
   };
-  constexpr Score WeakLever     = S( 3, 55);
-  constexpr Score WeakUnopposed = S(13, 25);
+  constexpr Score WeakLever     = S( 4, 58);
+  constexpr Score WeakUnopposed = S(13, 24);
 
   // Bonus for blocked pawns at 5th or 6th rank
-  constexpr Score BlockedPawn[2] = { S(-15, -3), S(-6, 3) };
+  constexpr Score BlockedPawn[2] = { S(-17, -6), S(-9, 2) };
 
   constexpr Score BlockedStorm[RANK_NB] = {
     S(0, 0), S(0, 0), S(75, 78), S(-8, 16), S(-6, 10), S(-6, 6), S(0, 2)
   };
 
   // Connected pawn bonus
-  constexpr int Connected[RANK_NB] = { 0, 5, 7, 11, 24, 48, 86 };
+  constexpr int Connected[RANK_NB] = { 0, 5, 7, 11, 23, 48, 87 };
 
   // Strength of pawn shelter for our king by [distance from edge][rank].
   // RANK_1 = 0 is used for files where we have no pawn, or pawn is behind our king.
@@ -249,8 +250,8 @@ namespace {
 
   // KingOnFile[semi-open Us][semi-open Them] contains bonuses/penalties
   // for king when the king is on a semi-open or open file.
-  constexpr Score KingOnFile[2][2] = {{ S(-19,12), S(-6, 7)  },
-                                     {  S(  0, 2), S( 6,-5) }};
+  constexpr Score KingOnFile[2][2] = {{ S(-21,10), S(-7, 1)  },
+                                     {  S(  0,-3), S( 9,-4) }};
 
 #ifdef HORDE
   constexpr Score ImbalancedHorde = S(49, 39);
@@ -269,6 +270,7 @@ namespace {
 
     constexpr Color     Them = ~Us;
     constexpr Direction Up   = pawn_push(Us);
+    constexpr Direction Down = -Up;
 
     Bitboard neighbours, stoppers, support, phalanx, opposed;
     Bitboard lever, leverPush, blocked;
@@ -327,6 +329,13 @@ namespace {
 #endif
         support    = neighbours & rank_bb(s - Up);
 
+        if (doubled)
+        {
+            // Additional doubled penalty if none of their pawns is fixed
+            if (!(ourPawns & shift<Down>(theirPawns | pawn_attacks_bb<Them>(theirPawns))))
+                score -= DoubledEarly;
+        }
+
         // A pawn is backward when it is behind all pawns of the same color on
         // the adjacent files and cannot safely advance.
         backward =  !(neighbours & forward_ranks_bb(Them, s + Up))
@@ -376,7 +385,7 @@ namespace {
 
         else if (backward)
             score -=  Backward[pos.variant()]
-                    + WeakUnopposed * !opposed;
+                    + WeakUnopposed * !opposed * bool(~(FileABB | FileHBB) & s);
 
 #ifdef HORDE
         if (!support || pos.is_horde())

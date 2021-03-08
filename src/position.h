@@ -1,6 +1,6 @@
 /*
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
-  Copyright (C) 2004-2020 The Stockfish developers (see AUTHORS file)
+  Copyright (C) 2004-2021 The Stockfish developers (see AUTHORS file)
 
   Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -26,6 +26,7 @@
 
 #include "bitboard.h"
 #include "evaluate.h"
+#include "psqt.h"
 #include "types.h"
 
 #ifdef USE_NNUE
@@ -134,7 +135,7 @@ public:
   Bitboard blockers_for_king(Color c) const;
   Bitboard check_squares(PieceType pt) const;
   Bitboard pinners(Color c) const;
-  bool is_discovery_check_on_king(Color c, Move m) const;
+  bool is_discovered_check_on_king(Color c, Move m) const;
 
   // Attacks to/from a given square
   Bitboard attackers_to(Square s) const;
@@ -352,14 +353,6 @@ private:
   Variant var;
   Variant subvar;
 };
-
-namespace PSQT {
-#ifdef CRAZYHOUSE
-  extern Score psq[VARIANT_NB][PIECE_NB][SQUARE_NB+1];
-#else
-  extern Score psq[VARIANT_NB][PIECE_NB][SQUARE_NB];
-#endif
-}
 
 extern std::ostream& operator<<(std::ostream& os, const Position& pos);
 
@@ -591,7 +584,7 @@ inline Bitboard Position::check_squares(PieceType pt) const {
   return st->checkSquares[pt];
 }
 
-inline bool Position::is_discovery_check_on_king(Color c, Move m) const {
+inline bool Position::is_discovered_check_on_king(Color c, Move m) const {
 #ifdef CRAZYHOUSE
   if (is_house() && type_of(m) == DROP)
       return false;
@@ -617,7 +610,8 @@ inline int Position::pawns_on_same_color_squares(Color c, Square s) const {
 }
 
 inline Key Position::key() const {
-  return st->key;
+  return st->rule50 < 14 ? st->key
+                         : st->key ^ make_key((st->rule50 - 14) / 8);
 }
 
 inline Key Position::pawn_key() const {
@@ -1182,7 +1176,7 @@ inline bool Position::capture_or_promotion(Move m) const {
 inline bool Position::capture(Move m) const {
   assert(is_ok(m));
   // Castling is encoded as "king captures rook"
-  return (!empty(to_sq(m)) && type_of(m) != CASTLING) || type_of(m) == ENPASSANT;
+  return (!empty(to_sq(m)) && type_of(m) != CASTLING) || type_of(m) == EN_PASSANT;
 }
 
 inline Piece Position::captured_piece() const {

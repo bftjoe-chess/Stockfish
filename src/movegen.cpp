@@ -1,6 +1,6 @@
 /*
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
-  Copyright (C) 2004-2020 The Stockfish developers (see AUTHORS file)
+  Copyright (C) 2004-2021 The Stockfish developers (see AUTHORS file)
 
   Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -200,7 +200,7 @@ namespace {
 
             // Add pawn pushes which give discovered check. This is possible only
             // if the pawn is not on the same file as the enemy king, because we
-            // don't generate captures. Note that a possible discovery check
+            // don't generate captures. Note that a possible discovered check
             // promotion has been already generated amongst the captures.
             Bitboard dcCandidateQuiets = pos.blockers_for_king(Them) & pawnsNotOn7;
             if (dcCandidateQuiets)
@@ -264,7 +264,7 @@ namespace {
             moveList = make_promotions<V, Type, Up     >(moveList, pop_lsb(&b3), ksq);
     }
 
-    // Standard and en-passant captures
+    // Standard and en passant captures
     if (Type == CAPTURES || Type == EVASIONS || Type == NON_EVASIONS)
     {
         Bitboard b1 = shift<UpRight>(pawnsNotOn7) & enemies;
@@ -297,10 +297,8 @@ namespace {
         {
             assert(rank_of(pos.ep_square()) == relative_rank(Us, RANK_6));
 
-            // An en passant capture can be an evasion only if the checking piece
-            // is the double pushed pawn and so is in the target. Otherwise this
-            // is a discovery check and we are forced to do otherwise.
-            if (Type == EVASIONS && !(target & (pos.ep_square() - Up)))
+            // An en passant capture cannot resolve a discovered check.
+            if (Type == EVASIONS && (target & (pos.ep_square() + Up)))
                 return moveList;
 
             b1 = pawnsNotOn7 & pawn_attacks_bb(Them, pos.ep_square());
@@ -308,7 +306,7 @@ namespace {
             assert(b1);
 
             while (b1)
-                *moveList++ = make<ENPASSANT>(pop_lsb(&b1), pos.ep_square());
+                *moveList++ = make<EN_PASSANT>(pop_lsb(&b1), pos.ep_square());
         }
     }
 
@@ -316,25 +314,20 @@ namespace {
   }
 
 
-  template<Variant V, Color Us, PieceType Pt, bool Checks>
-  ExtMove* generate_moves(const Position& pos, ExtMove* moveList, Bitboard target) {
+  template<Variant V, PieceType Pt, bool Checks>
+  ExtMove* generate_moves(const Position& pos, ExtMove* moveList, Bitboard piecesToMove, Bitboard target) {
 
     static_assert(Pt != KING && Pt != PAWN, "Unsupported piece type in generate_moves()");
 
-    Bitboard bb = pos.pieces(Us, Pt);
+    Bitboard bb = piecesToMove & pos.pieces(Pt);
+
+    if (!bb)
+        return moveList;
+
+    [[maybe_unused]] const Bitboard checkSquares = pos.check_squares(Pt);
 
     while (bb) {
         Square from = pop_lsb(&bb);
-
-        if (Checks)
-        {
-            if (    (Pt == BISHOP || Pt == ROOK || Pt == QUEEN)
-                && !(attacks_bb<Pt>(from) & target & pos.check_squares(Pt)))
-                continue;
-
-            if (pos.blockers_for_king(~Us) & from)
-                continue;
-        }
 
         Bitboard b = attacks_bb<Pt>(from, pos.pieces()) & target;
 #ifdef KNIGHTRELAY
@@ -342,19 +335,18 @@ namespace {
         {
             if (Pt == KNIGHT)
                 b &= ~pos.pieces();
-            else if (attacks_bb<KNIGHT>(from) & pos.pieces(Us, KNIGHT))
+            else if (attacks_bb<KNIGHT>(from) & pos.pieces(color_of(pos.piece_on(from)), KNIGHT))
                 b |= attacks_bb<KNIGHT>(from) & target;
         }
 #endif
 #ifdef RELAY
         if (V == RELAY_VARIANT)
             for (PieceType pt = KNIGHT; pt <= KING; ++pt)
-                if (attacks_bb(pt, from, pos.pieces()) & pos.pieces(Us, pt))
+                if (attacks_bb(pt, from, pos.pieces()) & pos.pieces(color_of(pos.piece_on(from)), pt))
                     b |= attacks_bb(pt, from, pos.pieces()) & target;
 #endif
-
-        if (Checks)
-            b &= pos.check_squares(Pt);
+        if constexpr (Checks)
+            b &= checkSquares;
 
         while (b)
             *moveList++ = make_move(from, pop_lsb(&b));
@@ -366,8 +358,14 @@ namespace {
 
   template<Variant V, Color Us, GenType Type>
   ExtMove* generate_all(const Position& pos, ExtMove* moveList) {
-    constexpr bool Checks = Type == QUIET_CHECKS; // Reduce template instantations
-    Bitboard target;
+
+    static_assert(Type != LEGAL, "Unsupported type in generate_all()");
+
+    constexpr bool Checks = Type == QUIET_CHECKS; // Reduce template instantiations
+    Bitboard target, piecesToMove = pos.pieces(Us);
+
+    if(Type == QUIET_CHECKS)
+        piecesToMove &= ~pos.blockers_for_king(~Us);
 
     switch (Type)
     {
@@ -387,8 +385,6 @@ namespace {
         case NON_EVASIONS:
             target = ~pos.pieces(Us);
             break;
-        default:
-            static_assert(true, "Unsupported type in generate_all()");
     }
 #ifdef ANTI
     if (V == ANTI_VARIANT && pos.can_capture())
@@ -409,10 +405,10 @@ namespace {
 #endif
 
     moveList = generate_pawn_moves<V, Us, Type>(pos, moveList, target);
-    moveList = generate_moves<V, Us, KNIGHT, Checks>(pos, moveList, target);
-    moveList = generate_moves<V, Us, BISHOP, Checks>(pos, moveList, target);
-    moveList = generate_moves<V, Us,   ROOK, Checks>(pos, moveList, target);
-    moveList = generate_moves<V, Us,  QUEEN, Checks>(pos, moveList, target);
+    moveList = generate_moves<V, KNIGHT, Checks>(pos, moveList, piecesToMove, target);
+    moveList = generate_moves<V, BISHOP, Checks>(pos, moveList, piecesToMove, target);
+    moveList = generate_moves<V,   ROOK, Checks>(pos, moveList, piecesToMove, target);
+    moveList = generate_moves<V,  QUEEN, Checks>(pos, moveList, piecesToMove, target);
 #ifdef CRAZYHOUSE
     if (V == CRAZYHOUSE_VARIANT && Type != CAPTURES && pos.count_in_hand<ALL_PIECES>(Us))
     {
@@ -521,7 +517,7 @@ namespace {
 
 
 /// <CAPTURES>     Generates all pseudo-legal captures plus queen and checking knight promotions
-/// <QUIETS>       Generates all pseudo-legal non-captures and underpromotions(except checking knight)
+/// <QUIETS>       Generates all pseudo-legal non-captures and underpromotions (except checking knight)
 /// <NON_EVASIONS> Generates all pseudo-legal captures and non-captures
 ///
 /// Returns a pointer to the end of the move list.
@@ -608,8 +604,8 @@ template ExtMove* generate<QUIETS>(const Position&, ExtMove*);
 template ExtMove* generate<NON_EVASIONS>(const Position&, ExtMove*);
 
 
-/// generate<QUIET_CHECKS> generates all pseudo-legal non-captures.
-/// Returns a pointer to the end of the move list.
+/// generate<QUIET_CHECKS> generates all pseudo-legal non-captures giving check,
+/// except castling. Returns a pointer to the end of the move list.
 template<>
 ExtMove* generate<QUIET_CHECKS>(const Position& pos, ExtMove* moveList) {
 
@@ -875,7 +871,7 @@ ExtMove* generate<LEGAL>(const Position& pos, ExtMove* moveList) {
 
   Color us = pos.side_to_move();
   Bitboard pinned = pos.blockers_for_king(us) & pos.pieces(us);
-  bool validate = pinned;
+  bool validate = false;
 #ifdef GRID
   if (pos.is_grid()) validate = true;
 #endif
@@ -905,22 +901,28 @@ ExtMove* generate<LEGAL>(const Position& pos, ExtMove* moveList) {
   moveList = pos.checkers() ? generate<EVASIONS    >(pos, moveList)
                             : generate<NON_EVASIONS>(pos, moveList);
   while (cur != moveList)
-      if (   (validate || from_sq(*cur) == ksq || type_of(*cur) == ENPASSANT)
+  {
+      bool illegal;
 #ifdef CRAZYHOUSE
-#ifdef PLACEMENT
-          && !(pos.is_house() && !pos.is_placement() && type_of(*cur) == DROP)
-#else
-          && !(pos.is_house() && type_of(*cur) == DROP)
+      // Move validation is not designed to handle drop moves (from undefined)
+      if (type_of(*cur) == DROP)
+          // Protect against drop moves being generated for other variants
+          // This validation has been defined for years, but seems unnecessary
+          // since the move generator never caches moves nor leaks this list
+          illegal = !pos.is_house();
+      else
 #endif
-#endif
-          && !pos.legal(*cur))
-          *cur = (--moveList)->move;
+      illegal =  (validate
 #ifdef ATOMIC
-      else if (pos.is_atomic() && pos.capture(*cur) && !pos.legal(*cur))
-          *cur = (--moveList)->move;
+                  || (pos.is_atomic() && pos.capture(*cur))
 #endif
+                  || (pinned && pinned & from_sq(*cur)) || from_sq(*cur) == ksq || type_of(*cur) == EN_PASSANT)
+               && !pos.legal(*cur);
+      if (illegal)
+          *cur = (--moveList)->move;
       else
           ++cur;
+  }
 
   return moveList;
 }
